@@ -197,6 +197,8 @@ class BayesianOptimization(object):
                  acq='ucb',
                  kappa=2.576,
                  xi=0.0,
+                 fit=True,
+                 update=True,
                  **gp_params):
         """
         Main optimization method.
@@ -230,6 +232,8 @@ class BayesianOptimization(object):
         >>>                           pbounds={"x": (0, len(f)-1)})
         >>> bo.maximize(init_points=2, n_iter=25, acq="ucb", kappa=1)
         """
+        assert n_iter != 0 or fit
+
         # Reset timer
         self.plog.reset_timer()
 
@@ -244,19 +248,21 @@ class BayesianOptimization(object):
 
         y_max = self.space.Y.max()
 
-        # Set parameters if any was passed
-        self.gp.set_params(**gp_params)
+        if fit:
+            # Set parameters if any was passed
+            self.gp.set_params(**gp_params)
 
-        # Find unique rows of X to avoid GP from breaking
-        self.gp.fit(self.space.X, self.space.Y)
+            # Find unique rows of X to avoid GP from breaking
+            self.gp.fit(self.space.X, self.space.Y)
 
-        # Finding argmax of the acquisition function.
-        x_max = acq_max(ac=self.util.utility,
-                        gp=self.gp,
-                        y_max=y_max,
-                        bounds=self.space.bounds,
-                        random_state=self.random_state,
-                        **self._acqkw)
+        # # Finding argmax of the acquisition function.
+        # if n_iters == 0:
+        #     x_max = acq_max(ac=self.util.utility,
+        #                     gp=self.gp,
+        #                     y_max=y_max,
+        #                     bounds=self.space.bounds,
+        #                     random_state=self.random_state,
+        #                     **self._acqkw)
 
         # Print new header
         if self.verbose:
@@ -267,30 +273,9 @@ class BayesianOptimization(object):
         # of the target function is found and passed to the acq_max function.
         # The arg_max of the acquisition function is found and this will be
         # the next probed value of the target function in the next round.
+
+        x_sampled = []
         for i in range(n_iter):
-            # Test if x_max is repeated, if it is, draw another one at random
-            # If it is repeated, print a warning
-            pwarning = False
-            while x_max in self.space:
-                x_max = self.space.random_points(1)[0]
-                pwarning = True
-
-            # Append most recently generated values to X and Y arrays
-            y = self.space.observe_point(x_max)
-            if self.verbose:
-                self.plog.print_step(x_max, y, pwarning)
-
-            # Updating the GP.
-            self.gp.fit(self.space.X, self.space.Y)
-
-            # Update the best params seen so far
-            self.res['max'] = self.space.max_point()
-            self.res['all']['values'].append(y)
-            self.res['all']['params'].append(dict(zip(self.space.keys, x_max)))
-
-            # Update maximum value to search for next probe point.
-            if self.space.Y[-1] > y_max:
-                y_max = self.space.Y[-1]
 
             # Maximize acquisition function to find next probing point
             x_max = acq_max(ac=self.util.utility,
@@ -300,12 +285,40 @@ class BayesianOptimization(object):
                             random_state=self.random_state,
                             **self._acqkw)
 
+            if update:
+                # Test if x_max is repeated, if it is, draw another one at random
+                # If it is repeated, print a warning
+                pwarning = False
+                while x_max in self.space:
+                    x_max = self.space.random_points(1)[0]
+                    pwarning = True
+
+                # Append most recently generated values to X and Y arrays
+                y = self.space.observe_point(x_max)
+                if self.verbose:
+                    self.plog.print_step(x_max, y, pwarning)
+
+                # Updating the GP.
+                self.gp.fit(self.space.X, self.space.Y)
+
+                # Update the best params seen so far
+                self.res['max'] = self.space.max_point()
+                self.res['all']['values'].append(y)
+                self.res['all']['params'].append(dict(zip(self.space.keys, x_max)))
+
+                # Update maximum value to search for next probe point.
+                if self.space.Y[-1] > y_max:
+                    y_max = self.space.Y[-1]
+
+            x_sampled.append(x_max)
             # Keep track of total number of iterations
             self.i += 1
 
         # Print a final report if verbose active.
         if self.verbose:
             self.plog.print_summary()
+
+        return x_sampled
 
     def points_to_csv(self, file_name):
         """
