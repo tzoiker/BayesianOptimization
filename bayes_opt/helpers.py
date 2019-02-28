@@ -6,7 +6,9 @@ from scipy.stats import norm
 from scipy.optimize import minimize
 
 
-def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=100000, n_iter=250):
+
+
+def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=100000, n_iter=250, fixed_params=None):
     """
     A function to find the maximum of the acquisition function
 
@@ -42,34 +44,51 @@ def acq_max(ac, gp, y_max, bounds, random_state, n_warmup=100000, n_iter=250):
     :return: x_max, The arg max of the acquisition function.
     """
 
+    if fixed_params is None:
+        fixed_params = np.nan*np.zeros(len(bounds), dtype=float)
+    inds_fixed = np.where(~np.isnan(fixed_params))[0]
+    inds_opt = np.where(np.isnan(fixed_params))[0]
+    def opt_to_full(x_opt):
+        if len(x_opt.shape) == 1:
+            x_opt = x_opt.reshape((1, -1))
+        x = np.zeros((x_opt.shape[0], len(bounds)))
+        x[:, inds_opt] = x_opt
+        x[:, inds_fixed] = fixed_params[inds_fixed]
+        return x
+
+    def single_full_to_opt(x):
+        return x.copy()[inds_opt]
+
     # Warm up with random points
-    x_tries = random_state.uniform(bounds[:, 0], bounds[:, 1],
-                                   size=(n_warmup, bounds.shape[0]))
+    x_tries = opt_to_full(random_state.uniform(
+        bounds[inds_opt, 0], bounds[inds_opt, 1],
+        size=(n_warmup, len(inds_opt))
+    ))
+
     ys = ac(x_tries, gp=gp, y_max=y_max)
     x_max = x_tries[ys.argmax()]
     max_acq = ys.max()
 
     # Explore the parameter space more throughly
-    x_seeds = random_state.uniform(bounds[:, 0], bounds[:, 1],
-                                   size=(n_iter, bounds.shape[0]))
-    for x_try in x_seeds:
-        # Find the minimum of minus the acquisition function
-        res = minimize(lambda x: -ac(x.reshape(1, -1), gp=gp, y_max=y_max),
-                       x_try.reshape(1, -1),
-                       bounds=bounds,
-                       method="L-BFGS-B")
+    x_seeds = opt_to_full(random_state.uniform(
+        bounds[inds_opt, 0], bounds[inds_opt, 1],
+        size=(n_iter, len(inds_opt))
+    ))
 
+    for x_try in x_seeds:
+        res = minimize(lambda x: -ac(opt_to_full(x).reshape(1, -1), gp=gp, y_max=y_max),
+                       single_full_to_opt(x_try),
+                       bounds=bounds[inds_opt].reshape(-1,2),
+                       method="L-BFGS-B")
         # See if success
         if not res.success:
             continue
            
         # Store it if better than previous minimum(maximum).
         if max_acq is None or -res.fun[0] >= max_acq:
-            x_max = res.x
+            x_max = opt_to_full(res.x).flatten()
             max_acq = -res.fun[0]
 
-    # Clip output to make sure it lies within the bounds. Due to floating
-    # point technicalities this is not always the case.
     return np.clip(x_max, bounds[:, 0], bounds[:, 1])
 
 

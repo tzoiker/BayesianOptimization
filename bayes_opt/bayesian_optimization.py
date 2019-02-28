@@ -71,7 +71,7 @@ class BayesianOptimization(object):
         # Verbose
         self.verbose = verbose
 
-    def init(self, init_points):
+    def init(self, init_points, fixed_params=None):
         """
         Initialization method to kick start the optimization process. It is a
         combination of points passed by the user, and randomly sampled ones.
@@ -81,7 +81,20 @@ class BayesianOptimization(object):
         """
         # Concatenate new random points to possible existing
         # points from self.explore method.
-        rand_points = self.space.random_points(init_points)
+
+        bounds = self.space.bounds
+        if fixed_params is None:
+            fixed_params = np.nan * np.zeros(len(bounds), dtype=float)
+        inds_fixed = np.where(~np.isnan(fixed_params))[0]
+        def fix_full(x):
+            if len(x) == 0:
+                return x
+            x = x.reshape((x.shape[0],-1))
+            if len(fixed_params) != 0:
+                x[:, inds_fixed] = fixed_params[inds_fixed]
+            return x
+
+        rand_points = fix_full(self.space.random_points(init_points))
         self.init_points.extend(rand_points)
 
         # Evaluate target function at all initialization points
@@ -199,6 +212,7 @@ class BayesianOptimization(object):
                  xi=0.0,
                  fit=True,
                  update=True,
+                 fixed_params=None,
                  **gp_params):
         """
         Main optimization method.
@@ -244,7 +258,7 @@ class BayesianOptimization(object):
         if not self.initialized:
             if self.verbose:
                 self.plog.print_header()
-            self.init(init_points)
+            self.init(init_points, fixed_params)
 
         y_max = self.space.Y.max()
 
@@ -276,13 +290,13 @@ class BayesianOptimization(object):
 
         x_sampled = []
         for i in range(n_iter):
-
             # Maximize acquisition function to find next probing point
             x_max = acq_max(ac=self.util.utility,
                             gp=self.gp,
                             y_max=y_max,
                             bounds=self.space.bounds,
                             random_state=self.random_state,
+                            fixed_params=fixed_params,
                             **self._acqkw)
 
             if update:
